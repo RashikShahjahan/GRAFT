@@ -159,6 +159,8 @@ class ExperimentConfig(BaseModel):
     lr: float = 3e-4
     forget_lr_mult: float = 1.0
     beta: float = 0.0  # KL penalty off by default; only small-scale envs use 0.05 (set explicitly in sweeps/matrix_gr_7envs._shared)
+    retain_kl_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    retain_kl_chunk_size: int = Field(default=64, gt=0)
     rollout_batch_size: int = 128
     optimizer_batch_size: Optional[int] = None
     gpu_batch_size: Optional[int] = None
@@ -412,6 +414,16 @@ class ExperimentConfig(BaseModel):
                 raise ValueError(
                     "retain_source='base' requires vllm_colocate (full base-weight sync). "
                     "vllm_server/vllm_spawn do not support base-weight sync.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_retain_kl(self) -> ExperimentConfig:
+        if self.retain_kl_coef > 0:
+            if (self.retain_source != "adapter" or self.adapter_type not in ("mlp", "lora")
+                    or self.routing_mode not in ("classic", "exclusive")):
+                raise ValueError("retain_kl_coef requires adapter-based GRAFT with a frozen base")
+            if self.retain_warmup_steps or self.forget_warmup_steps:
+                raise ValueError("retain-only KL is not supported with adapter warmup phases")
         return self
 
     @model_validator(mode="after")

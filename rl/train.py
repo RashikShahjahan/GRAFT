@@ -529,6 +529,8 @@ class SampleGRPOTrainer(GRPOTrainer):
                  verbose=False, adapter_config=None,
                  renormalization_mode="retain-only",
                  split_moment=False,
+                 retain_kl_coef=0.0,
+                 retain_kl_chunk_size=64,
                  routing_lambda=1.0,
                  graft_w_max=4.0,
                  graft_step_policy="clamp",
@@ -635,6 +637,13 @@ class SampleGRPOTrainer(GRPOTrainer):
         self.gradient_routing_enabled = gradient_routing_enabled
         self._retain_params = retain_params or set()
         self._forget_params = forget_params or set()
+        self._retain_kl_coef = retain_kl_coef
+        self._retain_kl_chunk_size = retain_kl_chunk_size
+        if retain_kl_coef > 0:
+            if not gradient_routing_enabled or not self._retain_params:
+                raise ValueError("retain_kl_coef requires gradient routing and a RETAIN adapter")
+            if self.accelerator.num_processes != 1:
+                raise ValueError("retain-only KL currently supports single-process training only")
         self._forget_lr_mult = forget_lr_mult
         self._detect_unhackable = detect_unhackable
         self._routing_mode = routing_mode
@@ -3962,6 +3971,21 @@ class SampleGRPOTrainer(GRPOTrainer):
                             f"grad_diag/{metric}_{role}_param_{name}_samples", []
                         ).append(float(sel.mean()))
 
+    def _retain_kl_pass(self, model, inputs):
+        from retain_kl import backward_retain_kl
+        kl = backward_retain_kl(
+            self.accelerator.unwrap_model(model), inputs,
+            coefficient=self._retain_kl_coef,
+            backward=self.accelerator.backward,
+            retain_params=self._retain_params,
+            split_moment=self._split_moment,
+            chunk_size=self._retain_kl_chunk_size,
+            temperature=self.temperature,
+            loss_context=self.compute_loss_context_manager,
+        )
+        self._metrics.setdefault("train", {}).setdefault("retain_kl", []).append(kl.item())
+        return self._retain_kl_coef * kl
+
     def _dynamic_microbatch_training_step(self, model, inputs, num_items_in_batch):
         """Unified training step with dynamic token-based microbatching.
 
@@ -4033,10 +4057,14 @@ class SampleGRPOTrainer(GRPOTrainer):
             model, inputs, num_items_in_batch,
             record_metrics=True,
         )
-
         # Off-policy drift debug: if this step is one of the last K in the
         # rollout cycle, capture post-update grads and log drift stats.
         self._offpolicy_drift_maybe_post_capture(model)
+
+        # Keep the drift diagnostic policy-gradient-only on both sides, then
+        # add the unmasked deployment-policy regularizer before optimizer.step.
+        if self._retain_kl_coef > 0:
+            total_loss = total_loss + self._retain_kl_pass(model, inputs)
 
         # Tag the completed step's kind for retain-param-delta attribution next step.
         self._prev_was_coherence = getattr(
@@ -4346,12 +4374,6 @@ class SampleGRPOTrainer(GRPOTrainer):
             total_loss = total_loss + loss.detach() * scale
             del loss
 
-        if getattr(self, "_retain_kl_coef", 0) > 0:
-            retain_kl = self._retain_kl_pass(model)
-            total_loss = total_loss + self._retain_kl_coef * retain_kl
-            if record_metrics:
-                self._metrics.setdefault("train", {}).setdefault("retain_kl", []).append(retain_kl.item())
-
         _t_passes_end = time.perf_counter()
         if record_metrics:
             m = self._metrics.setdefault("train", {})
@@ -4654,7 +4676,7 @@ class SampleGRPOTrainer(GRPOTrainer):
             del packed, loss
 
         # Remove the pre-routing capture before any further backward (e.g. the
-        # retain-KL pass): v reflects the routed policy-gradient phase only.
+        # retain-KL pass, which adds its gradient to both moment sources).
         n_routing = len(good_idx) + len(bad_idx)
         if pre_routing_cap is not None:
             # Per-param capture guard (no silent fallback to plain AdamW). Every ACTIVE adapter's params must have a captured pre-routing
@@ -4722,13 +4744,6 @@ class SampleGRPOTrainer(GRPOTrainer):
                 v_floor=over_routing,
                 w_max=self._graft_w_max,
                 step_policy=self._graft_step_policy)
-
-        # Retain-KL regularizer pass (mirrors the homogeneous path), if enabled.
-        if getattr(self, "_retain_kl_coef", 0) > 0:
-            retain_kl = self._retain_kl_pass(model)
-            total_loss = total_loss + self._retain_kl_coef * retain_kl
-            if record_metrics:
-                self._metrics.setdefault("train", {}).setdefault("retain_kl", []).append(retain_kl.item())
 
         _t1 = time.perf_counter()
         if record_metrics:
@@ -4906,6 +4921,9 @@ class SampleGRPOTrainer(GRPOTrainer):
             for h in hooks:
                 h.remove()
             total_loss = total_loss + loss.detach() * (n_bad / n_total)
+
+        if self._retain_kl_coef > 0:
+            total_loss = total_loss + self._retain_kl_pass(model, inputs)
 
         # Log forward/backward timing and memory
         m = self._metrics.setdefault("train", {})
@@ -5088,6 +5106,10 @@ def _make_parser():
     parser.add_argument("--warmstart_only", action="store_true",
                         help="Run warm-start, log val CE, then exit before RL (validation aid).")
     parser.add_argument("--beta", type=float, default=0.0, help="KL penalty coefficient against reference model (0=disabled). Off by default; only small-scale envs use 0.05.")
+    parser.add_argument("--retain_kl_coef", type=float, default=0.0,
+                        help="Extra KL(pi_RETAIN || frozen base) on existing target rollouts, outside monitor routing (0=off). Single-process adapter GRAFT only; independent of --beta.")
+    parser.add_argument("--retain_kl_chunk_size", type=int, default=64,
+                        help="Completion positions per full-vocabulary RETAIN-KL projection (memory limit, not subsampling).")
     parser.add_argument("--epsilon", type=float, default=0.2, help="PPO lower clip (epsilon_low). TRL default 0.2.")
     parser.add_argument("--epsilon_high", type=float, default=None, help="PPO upper clip (DAPO Clip-Higher). Defaults to --epsilon (symmetric) if unset; DAPO uses 0.28.")
     parser.add_argument("--loss_type", type=str, default="grpo", help="TRL GRPO loss aggregation: 'grpo' (per-seq, our pinned default) or 'dapo' (token-level).")
@@ -6807,6 +6829,8 @@ def _run(args, exp_cfg=None):
         adapter_config=adapter_config,
         renormalization_mode=args.renormalization_mode,
         split_moment=args.split_moment,
+        retain_kl_coef=args.retain_kl_coef,
+        retain_kl_chunk_size=args.retain_kl_chunk_size,
         routing_lambda=args.routing_lambda,
         graft_w_max=args.graft_w_max,
         graft_step_policy=getattr(args, "graft_step_policy", "clamp"),

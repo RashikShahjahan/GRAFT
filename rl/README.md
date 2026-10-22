@@ -129,6 +129,43 @@ python train.py --config configs/<env>.yaml [--flag value ...]
   (default `./output`, i.e. directly into `rl/output/`, not a per-run subdirectory); pass
   `--output_dir output/<run>` to keep runs separate. `sweep.py` sets `output/<name>/<run_name>/` for you.
 
+### Anchor-free RETAIN-only KL experiment
+
+Add `--retain_kl_coef 0.05` to an existing adapter-based GRAFT command with
+`--coherence none --coh_samples_per_rollout 0`. Default `0` leaves training
+unchanged. This coefficient is **independent of `--beta`**: keep the original
+combined-policy KL setting fixed when comparing arms.
+
+The extra objective is `retain_kl_coef * mean_sequence(mean_token KL(pi_R || pi_0))`,
+where `pi_R` has FORGET disabled and `pi_0` has both adapters disabled on the
+frozen base. It reuses **all target trajectories in the current optimizer batch**,
+including flagged and zero-advantage rows, excludes anchor rows, and masks padding
+and tool-output positions. No environment calls, new generations, or monitor-based
+filtering are added. Completion positions are aligned with their preceding-token
+predictions. The KL sums over the full vocabulary at the training temperature.
+
+One sequence is processed at a time; `--retain_kl_chunk_size 64` limits vocabulary
+projections to 64 completion positions at a time (not a subsample). This bounds
+logit memory but adds two backbone forwards per target trajectory and checkpoint
+recomputation during backward. The same KL gradient is added to both RETAIN moment
+sources under `--split_moment`; FORGET's gradients are unchanged. The unweighted
+KL is logged as `retain_kl`. This first implementation supports single-process
+adapter GRAFT with a frozen base, without adapter warmup phases.
+
+A two-run pilot uses the existing SmolLM2-135M framed-sort no-anchor recipe:
+
+```bash
+python sweep.py --name sort_framed_retain_kl --config sweeps/sort_framed_retain_kl.py --no_baseline --dry_run
+# Remove --dry_run to launch the two GPU training runs.
+```
+
+Both arms use seed 1 and retain the recipe's existing `beta=0.05`; only the new
+coefficient differs (`0` versus `0.05`, an initial guess). Compare RETAIN-only
+legitimate task performance and detected/undetected hack rates against the control
+and frozen base, and inspect outputs for repetition or malformed completions.
+Preserving the base without learning is not success; confirm any pilot improvement
+with additional seeds and longer training.
+
 ## Running sweeps
 
 ```bash
