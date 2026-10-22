@@ -52,9 +52,12 @@ vol = modal.Volume.from_name("gr-modal-pilot", create_if_missing=True)
 #   wandb-key     — WANDB_API_KEY for whichever user is running the sweep.
 #     Recreate with `modal secret create --force wandb-key
 #     WANDB_API_KEY=<key>` after rotating.
+# Override for environments that do not use API rewards or W&B. An empty
+# GRAFT_MODAL_SECRETS disables secret injection; unset preserves the defaults.
 secrets = [
-    modal.Secret.from_name("gr-pilot-keys"),
-    modal.Secret.from_name("wandb-key"),
+    modal.Secret.from_name(name.strip())
+    for name in os.environ.get("GRAFT_MODAL_SECRETS", "gr-pilot-keys,wandb-key").split(",")
+    if name.strip()
 ]
 
 # Image: build deps from pyproject.toml + uv.lock so it matches the local venv.

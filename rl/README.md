@@ -54,6 +54,23 @@ are loaded as the namespace package `sweeps.*` with `rl/` as the working directo
   `requirements-modal.txt`, which is the Modal image's package freeze).
 - Figure scripts only need numpy, scipy, matplotlib and pyyaml.
 
+### Modal sweeps from macOS or a CPU-only host
+
+Use the lightweight client requirements without syncing the Linux/CUDA project:
+
+```bash
+uv run --no-project --python 3.11 --with-requirements requirements-modal-client.txt \
+  python sweep.py --name sort_framed_retain_kl_smoke \
+  --config sweeps/sort_framed_retain_kl.py --backend modal --no_pack \
+  --no_baseline --max_steps 5 --no_wandb --modal_sync_interval 0
+```
+
+Modal authentication must already be configured. By default the app injects
+`gr-pilot-keys` and `wandb-key`. Set `GRAFT_MODAL_SECRETS` to a comma-separated
+list to select other secrets. For sorting sweeps with `--no_wandb`, prefix the
+command with `GRAFT_MODAL_SECRETS=''` to run without API or W&B secrets.
+Training dependencies are installed in the remote Modal image.
+
 ## External code and data
 
 | Item | Needed for | How to get it |
