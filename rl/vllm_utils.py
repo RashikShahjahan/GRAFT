@@ -8,21 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-MLP_PRESETS = {
-    "m5":   {"retain_neurons": 5,   "forget_neurons": 5,   "layer_stride": 1},
-    "m10":  {"retain_neurons": 10,  "forget_neurons": 10,  "layer_stride": 1},
-    "m16":  {"retain_neurons": 16,  "forget_neurons": 16,  "layer_stride": 1},
-    "m30":  {"retain_neurons": 30,  "forget_neurons": 30,  "layer_stride": 1},
-    "m32":  {"retain_neurons": 32,  "forget_neurons": 32,  "layer_stride": 1},
-    # Asymmetric splits of the canonical m16 budget (32 total neurons/layer):
-    # strong-localization cells (2026-07-08). κ_F = 32/n_F (10.67 / 4.0).
-    "m29f3": {"retain_neurons": 29, "forget_neurons": 3,  "layer_stride": 1},
-    "m24f8": {"retain_neurons": 24, "forget_neurons": 8,  "layer_stride": 1},
-    "m64":  {"retain_neurons": 64,  "forget_neurons": 64,  "layer_stride": 1},
-    "m64_retain_only": {"retain_neurons": 64, "forget_neurons": 0, "layer_stride": 1},
-    "m128": {"retain_neurons": 128, "forget_neurons": 128, "layer_stride": 1},
-    "m256": {"retain_neurons": 256, "forget_neurons": 256, "layer_stride": 1},
-}
+from adapter_presets import MLP_PRESETS
 
 # Weight tensor names for MLP adapter serialization (client ↔ server)
 def default_kv_cache_gb(model_name: str):

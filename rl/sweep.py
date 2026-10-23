@@ -2275,7 +2275,7 @@ class SweepRunner:
         sweep_name = self.output_dir.name
         self._start_modal_sync()
         try:
-            with app.run(name=sweep_name) as running_app:
+            with app.run(name=sweep_name, detach=os.environ.get("GRAFT_MODAL_DETACH") == "1") as running_app:
                 print(f"[MODAL_APP] id={running_app.app_id} name={sweep_name}")
                 while self._modal_pack_queue or self._modal_active:
                     if self._interrupted:
@@ -2421,7 +2421,10 @@ def main():
 
     # Parse remaining args as train.py overrides (applied to every run dict).
     # Set all defaults to None so we can distinguish "explicitly passed" from "default".
-    from train import _make_parser as make_train_parser
+    # Previously loaded as a side effect of importing train.py.
+    from dotenv import load_dotenv
+    load_dotenv()
+    from train_args import make_parser as make_train_parser
     train_parser = make_train_parser()
     for action in train_parser._actions:
         action.default = None

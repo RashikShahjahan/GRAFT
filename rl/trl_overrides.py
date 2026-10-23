@@ -76,16 +76,27 @@ def _ref_logps_liger_fused(
 
     unwrapped = trainer.accelerator.unwrap_model(trainer.model)
 
-    last_hidden = trainer._get_last_hidden_state(
-        unwrapped,
-        input_ids,
-        attention_mask,
-        logits_to_keep,
-        pixel_values=None,
-        image_grid_thw=None,
-        pixel_attention_mask=None,
-        image_sizes=None,
-    )  # (B, logits_to_keep, H)
+    if num_images is None:
+        from peft import PeftModel
+
+        base = unwrapped.get_base_model() if isinstance(unwrapped, PeftModel) else unwrapped
+        # TRL's helper omits position_ids, so left padding shifts RoPE positions.
+        # In bf16 even a uniform shift changes rotary rounding enough to break
+        # the packed-vs-padded guardrail. Match the packed path's real-token
+        # positions, which start at zero independently for every sequence.
+        position_ids = attention_mask.long().cumsum(dim=-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 0)
+        hidden = base.model(
+            input_ids=input_ids, attention_mask=attention_mask,
+            position_ids=position_ids, use_cache=False,
+        ).last_hidden_state
+        last_hidden = hidden[:, :-1, :][:, -logits_to_keep:, :]
+    else:
+        last_hidden = trainer._get_last_hidden_state(
+            unwrapped, input_ids, attention_mask, logits_to_keep,
+            pixel_values=None, image_grid_thw=None,
+            pixel_attention_mask=None, image_sizes=None,
+        )  # (B, logits_to_keep, H)
 
     # Match TRL's logits/temperature scaling by pre-scaling the hidden state.
     # This is equivalent because logits = hidden @ W^T is linear in hidden.
@@ -110,7 +121,9 @@ def _ref_logps_liger_fused(
         reduction="none",
     )
     # Liger returns NLL; negate to get per-token logprob of the target token.
-    logps = (-loss_1d).to(last_hidden.dtype).view(B, T)
+    # Keep the CE result in float32, as in _old_logps_packed. Rounding logps
+    # back to bf16 adds a spurious difference to the validation and KL terms.
+    logps = (-loss_1d).float().view(B, T)
     return logps
 
 
@@ -118,8 +131,7 @@ def _old_logps_packed(trainer, prompt_completion_ids, attention_mask,
                       logits_to_keep, max_tokens_per_bin):
     """no-grad old_logps via the SAME true-sequence-packed varlen forward the
     UPDATE uses (`train._pack_for_forward` -> `trainer._packed_hidden`) + the
-    SAME per-token logp extraction (chunked lm_head -> log_softmax -> gather,
-    mirroring `_liger_from_hidden`'s diagnostic recompute at train.py ~1788).
+    SAME fused linear cross-entropy kernel as the update loss.
 
     Why this over `_ref_logps_dynamic` (bin+pad): the bin+pad path runs padded
     [B, max_T] attention (O(B*max_T^2), heavy padding at large token budgets)
@@ -515,15 +527,15 @@ def generate_and_score_completions(trainer, inputs):
                 trainer, prompt_completion_ids, attention_mask, logits_to_keep,
                 max_tokens_per_bin=packed_budget)
 
-            # PERMANENT GUARDRAIL: on step 0 of EVERY run (cheap 256-sample
-            # subset), and on every step when --old_logps_validate_packed forces
+            # PERMANENT GUARDRAIL: on the first rollout of EVERY run,
+            # and on every step when --old_logps_validate_packed forces
             # a full-batch check, cross-validate the packed logps against the
             # independent bin+pad reference and FAIL LOUD on a STRUCTURAL
             # divergence. bin+pad is NOT ground truth — it is the padded kernel
             # we removed; the packed path deliberately matches the update's
-            # VARLEN forward, so a small residual (mean ~6.8e-3, verified
-            # attention-only: log_softmax vs liger-CE are bit-identical here, so
-            # the LM head is ruled out) is EXPECTED. The 3e-2 threshold only
+            # VARLEN forward. The reference uses identical real-token position
+            # IDs and float32 CE outputs; small attention-kernel residuals can
+            # still occur with different batch shapes. The 3e-2 threshold only
             # catches STRUCTURAL bugs (wrong tokens / misalignment / packing),
             # which show mean ~O(0.1-1). This makes a future kernel regression
             # fail on step 0 instead of silently biasing gradients for hours.

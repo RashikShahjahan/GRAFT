@@ -1,0 +1,6 @@
+# CPU-only sweep orchestration; training dependencies live in the Modal image.
+modal==1.4.3
+pydantic>=2
+pyyaml>=6
+python-dotenv>=1.0.0
+matplotlib>=3.10.8
