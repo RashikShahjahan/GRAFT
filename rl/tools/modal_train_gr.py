@@ -104,6 +104,10 @@ image = (
     )
     .env({"PATH": "/opt/venv/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           "PYTHONPATH": REPO_REMOTE,
+          # The container re-imports this module to reconstruct function
+          # dependencies. Keep import-time options identical to the launcher.
+          "GRAFT_MODAL_SECRETS": os.environ.get("GRAFT_MODAL_SECRETS", "gr-pilot-keys,wandb-key"),
+          "GRAFT_MODAL_TRAIN_CPUS": os.environ.get("GRAFT_MODAL_TRAIN_CPUS", "64"),
           "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
           # Quiet HF transfer warnings, point cache to volume so model downloads persist.
           "HF_HOME": "/output/_hf_cache",
@@ -354,7 +358,7 @@ def _run_training(params: dict, log_path: str) -> dict:
     # took 22s on a cpu=8 container and 22s on cpu=64 (tail-dominated; see
     # tools/modal_kodcode_coh_grade_perf.py). Reward grading is synchronous and
     # GPU-idle, so starving it directly stretches every rollout phase.
-    cpu=64,
+    cpu=int(os.environ.get("GRAFT_MODAL_TRAIN_CPUS", "64")),
     volumes={OUTPUT_REMOTE: vol},
     secrets=secrets,
     timeout=8 * 60 * 60,  # 8h max per run (4h killed a countdown_code DN run at

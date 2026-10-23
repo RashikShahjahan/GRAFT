@@ -70,6 +70,8 @@ Modal authentication must already be configured. By default the app injects
 list to select other secrets. For sorting sweeps with `--no_wandb`, prefix the
 command with `GRAFT_MODAL_SECRETS=''` to run without API or W&B secrets.
 Training dependencies are installed in the remote Modal image.
+For unpacked sweeps, set `GRAFT_MODAL_TRAIN_CPUS=8` to reduce the per-container
+CPU request from its default of 64 when scheduling smaller experiments.
 
 ## External code and data
 
