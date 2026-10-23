@@ -160,6 +160,7 @@ class ExperimentConfig(BaseModel):
     forget_lr_mult: float = 1.0
     beta: float = 0.0  # KL penalty off by default; only small-scale envs use 0.05 (set explicitly in sweeps/matrix_gr_7envs._shared)
     retain_kl_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    retain_kl_batch_size: int = Field(default=32, gt=0)
     retain_kl_chunk_size: int = Field(default=64, gt=0)
     rollout_batch_size: int = 128
     optimizer_batch_size: Optional[int] = None

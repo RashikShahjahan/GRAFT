@@ -168,19 +168,52 @@ and tool-output positions. No environment calls, new generations, or monitor-bas
 filtering are added. Completion positions are aligned with their preceding-token
 predictions. The KL sums over the full vocabulary at the training temperature.
 
-One sequence is processed at a time; `--retain_kl_chunk_size 64` limits vocabulary
-projections to 64 completion positions at a time (not a subsample). This bounds
-logit memory but adds two backbone forwards per target trajectory and checkpoint
-recomputation during backward. The same KL gradient is added to both RETAIN moment
-sources under `--split_moment`; FORGET's gradients are unchanged. The unweighted
-KL is logged as `retain_kl`. This first implementation supports single-process
-adapter GRAFT with a frozen base, without adapter warmup phases.
+`--retain_kl_batch_size 32` controls how many target sequences share a backbone
+forward. Each batch uses a frozen-base forward and a RETAIN-only forward, with
+one backbone backward after accumulating the completion-position gradients.
+`--retain_kl_chunk_size 64` limits full-vocabulary projections to 64 completion
+positions at a time. Both options control memory use; every eligible sequence,
+completion position, and vocabulary entry still contributes to the same exact
+loss. The rollout batch, optimizer batch, coefficient, temperature, and
+per-sequence normalization are unchanged. Batching can introduce ordinary
+floating-point rounding differences.
 
-A two-run pilot uses the existing SmolLM2-135M framed-sort no-anchor recipe:
+The same KL gradient is added to both RETAIN moment sources under
+`--split_moment`; FORGET's gradients are unchanged. The unweighted KL is logged
+as `retain_kl`. This implementation supports single-process adapter GRAFT with a
+frozen base, without adapter warmup phases.
+
+The framed-sort sweep uses `retain_kl_batch_size=512` for its KL arm. An H200
+benchmark on 512 fixed synthetic sorting sequences (SmolLM2-135M, BF16,
+checkpointing, 64-token head chunks) measured the following KL-only times:
+
+| KL sequence batch | Seconds | Peak allocated GPU GiB |
+| --- | ---: | ---: |
+| Original per-sequence implementation | 106.64 | 0.41 |
+| 64 | 1.97 | 0.91 |
+| 128 | 1.11 | 1.48 |
+| 256 | 0.87 | 2.64 |
+| 512 | 0.81 | 4.94 |
+
+Batched times are medians of two warmed measurements on identical weights and
+inputs. This excludes generation, policy-gradient training, and vLLM memory.
+The loss difference was at most `3.5e-10`; BF16 gradient accumulation differs
+numerically (about 2.4% relative L2 difference, cosine above 0.9997). FP32
+loss/gradient checks against an independent dense KL passed on CPU and CUDA.
+To reproduce it in the Modal client environment, run
+`python -m modal run tools/modal_retain_kl_benchmark.py --baseline-ref 71210e8`.
+
+A five-step Modal training smoke test with KL batch 512 also passed: warm
+steps took about 5–6 seconds (previous scalar KL smoke: 115–117 seconds), with
+7.5 GiB peak training-process allocation. Startup and recurring evaluations
+are excluded from that warm-step comparison.
+
+A three-arm pilot compares the existing SmolLM2-135M framed-sort recipe with
+no anchors, RETAIN KL, and anchors:
 
 ```bash
 python sweep.py --name sort_framed_retain_kl --config sweeps/sort_framed_retain_kl.py --no_baseline --dry_run
-# Remove --dry_run to launch the two GPU training runs.
+# Remove --dry_run to launch the three GPU training runs.
 ```
 
 Both arms use seed 1 and retain the recipe's existing `beta=0.05`; only the new

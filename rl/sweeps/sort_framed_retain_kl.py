@@ -8,6 +8,8 @@ from sweeps.sort_framed_suite import _GR, _GR_NOCOH
 
 runs = [
     {**_GR_NOCOH, "seed": 1, "retain_kl_coef": coefficient,
+     # Execution-only: the full rollout fits on H200 with chunked KL logits.
+     **({"retain_kl_batch_size": 512} if coefficient > 0 else {}),
      "run_name": f"sortframed_nocoh_retainkl{coefficient:g}_s1"}
     for coefficient in (0.0, 0.05)
 ]

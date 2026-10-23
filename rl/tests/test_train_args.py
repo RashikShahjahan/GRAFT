@@ -11,11 +11,15 @@ def test_parser_without_site_packages():
 import sys
 from train_args import make_parser
 args = make_parser().parse_args([
-    '--max_steps', '5', '--retain_kl_coef', '0.05',
+    '--max_steps', '5', '--retain_kl_coef', '0.05', '--retain_kl_batch_size', '128',
+    '--retain_kl_chunk_size', '32',
     '--mlp_config', 'm16', '--lora_config', 'r32', '--no_wandb',
 ])
 assert args.max_steps == 5
 assert args.retain_kl_coef == 0.05
+assert args.retain_kl_batch_size == 128
+assert args.retain_kl_chunk_size == 32
+assert make_parser().parse_args([]).retain_kl_batch_size == 32
 assert args.mlp_config == 'm16'
 assert args.lora_config == 'r32'
 assert args.no_wandb

@@ -503,6 +503,7 @@ class SampleGRPOTrainer(GRPOTrainer):
                  renormalization_mode="retain-only",
                  split_moment=False,
                  retain_kl_coef=0.0,
+                 retain_kl_batch_size=32,
                  retain_kl_chunk_size=64,
                  routing_lambda=1.0,
                  graft_w_max=4.0,
@@ -611,6 +612,7 @@ class SampleGRPOTrainer(GRPOTrainer):
         self._retain_params = retain_params or set()
         self._forget_params = forget_params or set()
         self._retain_kl_coef = retain_kl_coef
+        self._retain_kl_batch_size = retain_kl_batch_size
         self._retain_kl_chunk_size = retain_kl_chunk_size
         if retain_kl_coef > 0:
             if not gradient_routing_enabled or not self._retain_params:
@@ -3953,6 +3955,7 @@ class SampleGRPOTrainer(GRPOTrainer):
             backward=self.accelerator.backward,
             retain_params=self._retain_params,
             split_moment=self._split_moment,
+            batch_size=self._retain_kl_batch_size,
             chunk_size=self._retain_kl_chunk_size,
             temperature=self.temperature,
             loss_context=self.compute_loss_context_manager,
@@ -6030,6 +6033,7 @@ def _run(args, exp_cfg=None):
         renormalization_mode=args.renormalization_mode,
         split_moment=args.split_moment,
         retain_kl_coef=args.retain_kl_coef,
+        retain_kl_batch_size=args.retain_kl_batch_size,
         retain_kl_chunk_size=args.retain_kl_chunk_size,
         routing_lambda=args.routing_lambda,
         graft_w_max=args.graft_w_max,

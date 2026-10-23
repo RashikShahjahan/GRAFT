@@ -142,6 +142,8 @@ def make_parser():
     parser.add_argument("--beta", type=float, default=0.0, help="KL penalty coefficient against reference model (0=disabled). Off by default; only small-scale envs use 0.05.")
     parser.add_argument("--retain_kl_coef", type=float, default=0.0,
                         help="Extra KL(pi_RETAIN || frozen base) on existing target rollouts, outside monitor routing (0=off). Single-process adapter GRAFT only; independent of --beta.")
+    parser.add_argument("--retain_kl_batch_size", type=int, default=32,
+                        help="Target sequences per RETAIN-KL backbone forward (positive memory limit; does not change the rollout or optimizer batch).")
     parser.add_argument("--retain_kl_chunk_size", type=int, default=64,
                         help="Completion positions per full-vocabulary RETAIN-KL projection (memory limit, not subsampling).")
     parser.add_argument("--epsilon", type=float, default=0.2, help="PPO lower clip (epsilon_low). TRL default 0.2.")
