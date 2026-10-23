@@ -108,6 +108,7 @@ image = (
           # dependencies. Keep import-time options identical to the launcher.
           "GRAFT_MODAL_SECRETS": os.environ.get("GRAFT_MODAL_SECRETS", "gr-pilot-keys,wandb-key"),
           "GRAFT_MODAL_TRAIN_CPUS": os.environ.get("GRAFT_MODAL_TRAIN_CPUS", "64"),
+          "GRAFT_MODAL_RESUME_RETRIES": os.environ.get("GRAFT_MODAL_RESUME_RETRIES", "0"),
           "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
           # Quiet HF transfer warnings, point cache to volume so model downloads persist.
           "HF_HOME": "/output/_hf_cache",
@@ -280,6 +281,12 @@ def _prepare_params(params: dict, sweep_name: str) -> tuple[dict, str, str, str]
     out_dir = os.path.join(OUTPUT_REMOTE, sweep_name, basename)
     os.makedirs(out_dir, exist_ok=True)
     params = {**params, "output_dir": out_dir, "gpu_id": 0}
+    if int(os.environ.get("GRAFT_MODAL_RESUME_RETRIES", "0")) > 0 and not params.get("resume_from"):
+        from modal_checkpoint import latest_training_checkpoint
+        checkpoint = latest_training_checkpoint(out_dir)
+        if checkpoint:
+            params["resume_from"] = checkpoint
+            print(f"[MODAL RESUME] {basename}: {checkpoint}", flush=True)
     # Inside the container vLLM must run in-process (no separate server). The
     # caller may override vllm_gpu_memory; otherwise use the per-run default.
     params.setdefault("vllm_spawn", True)
@@ -359,6 +366,7 @@ def _run_training(params: dict, log_path: str) -> dict:
     # tools/modal_kodcode_coh_grade_perf.py). Reward grading is synchronous and
     # GPU-idle, so starving it directly stretches every rollout phase.
     cpu=int(os.environ.get("GRAFT_MODAL_TRAIN_CPUS", "64")),
+    retries=int(os.environ.get("GRAFT_MODAL_RESUME_RETRIES", "0")),
     volumes={OUTPUT_REMOTE: vol},
     secrets=secrets,
     timeout=8 * 60 * 60,  # 8h max per run (4h killed a countdown_code DN run at
@@ -375,6 +383,7 @@ def train_one(params: dict, sweep_name: str) -> dict:
     if REPO_REMOTE not in sys.path:
         sys.path.insert(0, REPO_REMOTE)
 
+    vol.reload()  # Observe committed checkpoints from a previous worker attempt.
     params, run_name, out_dir, log_path = _prepare_params(params, sweep_name)
     try:
         result = _run_training(params, log_path)

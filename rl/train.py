@@ -1153,6 +1153,7 @@ class SampleGRPOTrainer(GRPOTrainer):
             torch.save(self.lr_scheduler.state_dict(), os.path.join(checkpoint_dir, "scheduler.pt"))
         # Save trainer state (has log_history with per-step metrics)
         self.state.save_to_json(os.path.join(checkpoint_dir, "trainer_state.json"))
+        self._save_rng_state(checkpoint_dir)
 
     def _eval_due_this_rollout(self):
         """Check if eval should fire on this rollout.

@@ -72,6 +72,11 @@ command with `GRAFT_MODAL_SECRETS=''` to run without API or W&B secrets.
 Training dependencies are installed in the remote Modal image.
 For unpacked sweeps, set `GRAFT_MODAL_TRAIN_CPUS=8` to reduce the per-container
 CPU request from its default of 64 when scheduling smaller experiments.
+For runs exceeding the 8-hour worker timeout, set `GRAFT_MODAL_RESUME_RETRIES=5`
+and use `--save_steps 100`. Unpacked workers resume from the latest complete
+adapter checkpoint on retry, including optimizer, scheduler, and RNG state.
+Choose a checkpoint interval shorter than the timeout at your measured step
+time. Set `GRAFT_MODAL_DETACH=1` to keep the app running if the launcher disconnects.
 
 ## External code and data
 
